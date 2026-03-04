@@ -1,7 +1,11 @@
 require("dotenv").config();
 
-process.on("unhandledRejection", (reason) => console.error("UNHANDLED REJECTION:", reason));
-process.on("uncaughtException", (err) => console.error("UNCAUGHT EXCEPTION:", err));
+process.on("unhandledRejection", (reason) =>
+  console.error("UNHANDLED REJECTION:", reason)
+);
+process.on("uncaughtException", (err) =>
+  console.error("UNCAUGHT EXCEPTION:", err)
+);
 process.on("SIGTERM", () => {
   console.log("SIGTERM received — shutting down gracefully...");
   process.exit(0);
@@ -25,16 +29,7 @@ if (!SHEET_ID) throw new Error("Missing SHEET_ID");
 if (!TARGET_CHANNEL_ID) throw new Error("Missing TARGET_CHANNEL_ID");
 if (!GOOGLE_CREDENTIALS) throw new Error("Missing GOOGLE_CREDENTIALS");
 
-const receiver = new ExpressReceiver({
-  signingSecret: SLACK_SIGNING_SECRET,
-  endpoints: "/slack/events",
-});
-
-/** ✅ LOG EVERY INCOMING REQUEST (PROVES IF SLACK IS EVEN HITTING YOU) */
-receiver.app.use((req, res, next) => {
-  console.log("HTTP IN:", req.method, req.path);
-  next();
-});
+const receiver = new ExpressReceiver({ signingSecret: SLACK_SIGNING_SECRET });
 
 // health checks
 receiver.app.get("/", (req, res) => res.status(200).send("ok"));
@@ -64,12 +59,17 @@ async function getCurrentOnCallEmail() {
 
   const value = resp.data.values?.[0]?.[0];
   const email = (value || "").toString().trim();
-  if (!email || !email.includes("@")) throw new Error(`Cell ${CURRENT_CELL_RANGE} is empty or not an email.`);
+  if (!email || !email.includes("@")) {
+    throw new Error(`Cell ${CURRENT_CELL_RANGE} is empty or not an email.`);
+  }
   return email;
 }
 
 async function lookupSlackUserIdByEmail(email) {
-  const res = await app.client.users.lookupByEmail({ token: SLACK_BOT_TOKEN, email });
+  const res = await app.client.users.lookupByEmail({
+    token: SLACK_BOT_TOKEN,
+    email,
+  });
   return res.user?.id || null;
 }
 
@@ -90,46 +90,33 @@ async function postOnCallReply({ channel, thread_ts, logger }) {
       token: SLACK_BOT_TOKEN,
       channel,
       thread_ts,
-      text: userId ? `On call: <@${userId}>` : `On call: ${email} (couldn’t map email to Slack user)`,
+      text: userId
+        ? `On call: <@${userId}>`
+        : `On call: ${email} (couldn’t map email to Slack user)`,
     });
   } catch (err) {
     logger?.error(err);
   }
 }
 
-app.event("message", async ({ event, logger }) => {
-  console.log("EVENT:message received:", {
-    channel: event.channel,
-    user: event.user,
-    subtype: event.subtype,
-    thread_ts: event.thread_ts,
-    ts: event.ts,
-  });
-
-  if (event.channel !== TARGET_CHANNEL_ID) return;
-  if (event.thread_ts) return;
-  if (event.subtype && event.subtype !== "bot_message") return;
-
-  const selfUserId = await ensureSelfUserId();
-  if (event.user && event.user === selfUserId) return;
-
-  await postOnCallReply({ channel: event.channel, thread_ts: event.ts, logger });
-});
-
+/**
+ * ✅ ONLY respond to @mentions to prevent double-posting.
+ */
 app.event("app_mention", async ({ event, logger }) => {
-  console.log("EVENT:app_mention received:", {
-    channel: event.channel,
-    user: event.user,
-    thread_ts: event.thread_ts,
-    ts: event.ts,
-  });
+  try {
+    if (event.channel !== TARGET_CHANNEL_ID) return;
 
-  if (event.channel !== TARGET_CHANNEL_ID) return;
+    const selfUserId = await ensureSelfUserId();
+    if (event.user && event.user === selfUserId) return;
 
-  const selfUserId = await ensureSelfUserId();
-  if (event.user && event.user === selfUserId) return;
-
-  await postOnCallReply({ channel: event.channel, thread_ts: event.thread_ts || event.ts, logger });
+    await postOnCallReply({
+      channel: event.channel,
+      thread_ts: event.thread_ts || event.ts,
+      logger,
+    });
+  } catch (err) {
+    logger?.error(err);
+  }
 });
 
 (async () => {
