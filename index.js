@@ -3,7 +3,7 @@ require("dotenv").config();
 process.on("unhandledRejection", (reason) => console.error("UNHANDLED REJECTION:", reason));
 process.on("uncaughtException", (err) => console.error("UNCAUGHT EXCEPTION:", err));
 process.on("SIGTERM", () => {
-  console.log("SIGTERM received (Railway is stopping the container)");
+  console.log("SIGTERM received — shutting down gracefully...");
   process.exit(0);
 });
 
@@ -25,18 +25,21 @@ if (!SHEET_ID) throw new Error("Missing SHEET_ID");
 if (!TARGET_CHANNEL_ID) throw new Error("Missing TARGET_CHANNEL_ID");
 if (!GOOGLE_CREDENTIALS) throw new Error("Missing GOOGLE_CREDENTIALS");
 
-// IMPORTANT: Bolt expects Slack events at /slack/events by default.
-// We set it explicitly so it’s unambiguous and matches what you set in Slack.
 const receiver = new ExpressReceiver({
   signingSecret: SLACK_SIGNING_SECRET,
   endpoints: "/slack/events",
+});
+
+/** ✅ LOG EVERY INCOMING REQUEST (PROVES IF SLACK IS EVEN HITTING YOU) */
+receiver.app.use((req, res, next) => {
+  console.log("HTTP IN:", req.method, req.path);
+  next();
 });
 
 // health checks
 receiver.app.get("/", (req, res) => res.status(200).send("ok"));
 receiver.app.get("/healthz", (req, res) => res.status(200).send("ok"));
 
-// create the Bolt app BEFORE using app.event(...)
 const app = new App({ token: SLACK_BOT_TOKEN, receiver });
 
 function getSheetsClient() {
@@ -95,7 +98,6 @@ async function postOnCallReply({ channel, thread_ts, logger }) {
 }
 
 app.event("message", async ({ event, logger }) => {
-  // DEBUG: proves whether Slack is delivering message events to you
   console.log("EVENT:message received:", {
     channel: event.channel,
     user: event.user,
