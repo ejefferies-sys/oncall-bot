@@ -25,6 +25,11 @@ if (!SHEET_ID) throw new Error("Missing SHEET_ID");
 if (!TARGET_CHANNEL_ID) throw new Error("Missing TARGET_CHANNEL_ID");
 
 const receiver = new ExpressReceiver({ signingSecret: SLACK_SIGNING_SECRET });
+
+// ✅ Healthcheck endpoints for Railway
+receiver.app.get("/", (req, res) => res.status(200).send("ok"));
+receiver.app.get("/healthz", (req, res) => res.status(200).send("ok"));
+
 // Default endpoint is /slack/events (matches your Slack Event Subscriptions URL)
 const app = new App({ token: SLACK_BOT_TOKEN, receiver });
 
