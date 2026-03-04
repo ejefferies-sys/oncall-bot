@@ -147,7 +147,12 @@ app.event("app_mention", async ({ event, logger }) => {
 });
 
 (async () => {
-  const port = process.env.PORT || 3000;
-  await app.start(port);
+  const port = Number(process.env.PORT || 3000);
+  console.log("PORT env is:", process.env.PORT, "-> binding to:", port);
+
+  // IMPORTANT: Bolt's app.start starts its own express app, but since we are using ExpressReceiver
+  // we should explicitly start the receiver to guarantee the port is bound in Railway.
+  await receiver.start(port);
+
   console.log(`⚡️ On-call bot listening on port ${port}`);
 })();
