@@ -1,14 +1,7 @@
 require("dotenv").config();
 
-/* ===== Crash + shutdown logging (add this block) ===== */
-process.on("unhandledRejection", (reason) => {
-  console.error("UNHANDLED REJECTION:", reason);
-});
-
-process.on("uncaughtException", (err) => {
-  console.error("UNCAUGHT EXCEPTION:", err);
-});
-
+process.on("unhandledRejection", (reason) => console.error("UNHANDLED REJECTION:", reason));
+process.on("uncaughtException", (err) => console.error("UNCAUGHT EXCEPTION:", err));
 process.on("SIGTERM", () => {
   console.log("SIGTERM received (Railway is stopping the container)");
   process.exit(0);
@@ -23,8 +16,6 @@ const {
   SHEET_ID,
   TARGET_CHANNEL_ID,
   CURRENT_CELL_RANGE = "Current!A2:A2",
-
-  // ✅ Use ONE env var that contains the whole JSON (service account key)
   GOOGLE_CREDENTIALS,
 } = process.env;
 
@@ -36,36 +27,15 @@ if (!GOOGLE_CREDENTIALS) throw new Error("Missing GOOGLE_CREDENTIALS");
 
 const receiver = new ExpressReceiver({ signingSecret: SLACK_SIGNING_SECRET });
 
-// ✅ Healthcheck endpoints for Railway
+// health checks
 receiver.app.get("/", (req, res) => res.status(200).send("ok"));
 receiver.app.get("/healthz", (req, res) => res.status(200).send("ok"));
 
-// ✅ Slack URL verification / challenge handler (extra safety)
-receiver.app.post("/slack/events", (req, res, next) => {
-  if (req.body && req.body.challenge) {
-    return res.status(200).send(req.body.challenge);
-  }
-  return next();
-});
-
-let SELF_USER_ID = null;
-async function ensureSelfUserId() {
-  if (SELF_USER_ID) return SELF_USER_ID;
-  const res = await app.client.auth.test({ token: SLACK_BOT_TOKEN });
-  SELF_USER_ID = res.user_id;
-  return SELF_USER_ID;
-}
+// create the Bolt app BEFORE using app.event(...)
+const app = new App({ token: SLACK_BOT_TOKEN, receiver });
 
 function getSheetsClient() {
-  const raw = process.env.GOOGLE_CREDENTIALS;
-
-  if (!raw) {
-    throw new Error("Missing GOOGLE_CREDENTIALS environment variable");
-  }
-
-  const creds = JSON.parse(raw);
-
-  // Convert escaped newlines to real newlines
+  const creds = JSON.parse(GOOGLE_CREDENTIALS);
   const privateKey = creds.private_key.replace(/\\n/g, "\n");
 
   const auth = new google.auth.JWT({
@@ -76,6 +46,7 @@ function getSheetsClient() {
 
   return google.sheets({ version: "v4", auth });
 }
+
 async function getCurrentOnCallEmail() {
   const sheets = getSheetsClient();
   const resp = await sheets.spreadsheets.values.get({
@@ -85,19 +56,21 @@ async function getCurrentOnCallEmail() {
 
   const value = resp.data.values?.[0]?.[0];
   const email = (value || "").toString().trim();
-
-  if (!email || !email.includes("@")) {
-    throw new Error(`Cell ${CURRENT_CELL_RANGE} is empty or not an email.`);
-  }
+  if (!email || !email.includes("@")) throw new Error(`Cell ${CURRENT_CELL_RANGE} is empty or not an email.`);
   return email;
 }
 
 async function lookupSlackUserIdByEmail(email) {
-  const res = await app.client.users.lookupByEmail({
-    token: SLACK_BOT_TOKEN,
-    email,
-  });
+  const res = await app.client.users.lookupByEmail({ token: SLACK_BOT_TOKEN, email });
   return res.user?.id || null;
+}
+
+let SELF_USER_ID = null;
+async function ensureSelfUserId() {
+  if (SELF_USER_ID) return SELF_USER_ID;
+  const res = await app.client.auth.test({ token: SLACK_BOT_TOKEN });
+  SELF_USER_ID = res.user_id;
+  return SELF_USER_ID;
 }
 
 async function postOnCallReply({ channel, thread_ts, logger }) {
@@ -105,62 +78,40 @@ async function postOnCallReply({ channel, thread_ts, logger }) {
     const email = await getCurrentOnCallEmail();
     const userId = await lookupSlackUserIdByEmail(email);
 
-    const text = userId
-      ? `On call: <@${userId}>`
-      : `On call: ${email} (couldn’t map this email to a Slack user)`;
-
     await app.client.chat.postMessage({
       token: SLACK_BOT_TOKEN,
       channel,
       thread_ts,
-      text,
+      text: userId ? `On call: <@${userId}>` : `On call: ${email} (couldn’t map email to Slack user)`,
     });
   } catch (err) {
     logger?.error(err);
   }
 }
 
-/**
- * Trigger #1: ANY new top-level message in the target channel
- */
 app.event("message", async ({ event, logger }) => {
-  try {
-    if (event.channel !== TARGET_CHANNEL_ID) return;
-    if (event.thread_ts) return; // only top-level posts
-    if (event.subtype && event.subtype !== "bot_message") return; // skip edits/deletes/etc.
+  if (event.channel !== TARGET_CHANNEL_ID) return;
+  if (event.thread_ts) return;
+  if (event.subtype && event.subtype !== "bot_message") return;
 
-    const selfUserId = await ensureSelfUserId();
-    if (event.user && event.user === selfUserId) return; // avoid loops
+  const selfUserId = await ensureSelfUserId();
+  if (event.user && event.user === selfUserId) return;
 
-    await postOnCallReply({ channel: event.channel, thread_ts: event.ts, logger });
-  } catch (err) {
-    logger?.error(err);
-  }
+  await postOnCallReply({ channel: event.channel, thread_ts: event.ts, logger });
 });
 
-/**
- * Trigger #2: @mention of the bot in the target channel
- */
 app.event("app_mention", async ({ event, logger }) => {
-  try {
-    if (event.channel !== TARGET_CHANNEL_ID) return;
+  if (event.channel !== TARGET_CHANNEL_ID) return;
 
-    const selfUserId = await ensureSelfUserId();
-    if (event.user && event.user === selfUserId) return;
+  const selfUserId = await ensureSelfUserId();
+  if (event.user && event.user === selfUserId) return;
 
-    const threadTs = event.thread_ts || event.ts;
-    await postOnCallReply({ channel: event.channel, thread_ts: threadTs, logger });
-  } catch (err) {
-    logger?.error(err);
-  }
+  await postOnCallReply({ channel: event.channel, thread_ts: event.thread_ts || event.ts, logger });
 });
 
 (async () => {
   const port = Number(process.env.PORT || 3000);
   console.log("PORT env is:", process.env.PORT, "-> binding to:", port);
-
-  // ✅ With ExpressReceiver, start the receiver
   await app.start(port);
-
   console.log(`⚡️ On-call bot listening on port ${port}`);
 })();
