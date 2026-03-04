@@ -140,7 +140,7 @@ app.event("app_mention", async ({ event, logger }) => {
   console.log("PORT env is:", process.env.PORT, "-> binding to:", port);
 
   // ✅ With ExpressReceiver, start the receiver
-  await receiver.start(port);
+  await app.start(port);
 
   console.log(`⚡️ On-call bot listening on port ${port}`);
 })();
