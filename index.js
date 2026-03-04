@@ -1,5 +1,19 @@
 require("dotenv").config();
 
+/* ===== Crash + shutdown logging (add this block) ===== */
+process.on("unhandledRejection", (reason) => {
+  console.error("UNHANDLED REJECTION:", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("UNCAUGHT EXCEPTION:", err);
+});
+
+process.on("SIGTERM", () => {
+  console.log("SIGTERM received (Railway is stopping the container)");
+  process.exit(0);
+});
+
 const { App, ExpressReceiver } = require("@slack/bolt");
 const { google } = require("googleapis");
 
