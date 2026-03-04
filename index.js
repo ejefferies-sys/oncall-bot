@@ -40,7 +40,13 @@ const receiver = new ExpressReceiver({ signingSecret: SLACK_SIGNING_SECRET });
 receiver.app.get("/", (req, res) => res.status(200).send("ok"));
 receiver.app.get("/healthz", (req, res) => res.status(200).send("ok"));
 
-const app = new App({ token: SLACK_BOT_TOKEN, receiver });
+// ✅ Slack URL verification / challenge handler (extra safety)
+receiver.app.post("/slack/events", (req, res, next) => {
+  if (req.body && req.body.challenge) {
+    return res.status(200).send(req.body.challenge);
+  }
+  return next();
+});
 
 let SELF_USER_ID = null;
 async function ensureSelfUserId() {
