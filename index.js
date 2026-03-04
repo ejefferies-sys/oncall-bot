@@ -37,11 +37,16 @@ async function ensureSelfUserId() {
 }
 
 function getSheetsClient() {
-  // GOOGLE_CREDENTIALS is a JSON string (Railway var)
-  const creds = JSON.parse(GOOGLE_CREDENTIALS);
+  const raw = process.env.GOOGLE_CREDENTIALS;
 
-  // creds.private_key usually contains literal "\n" sequences; convert to real newlines
-  const privateKey = (creds.private_key || "").replace(/\\n/g, "\n");
+  if (!raw) {
+    throw new Error("Missing GOOGLE_CREDENTIALS environment variable");
+  }
+
+  const creds = JSON.parse(raw);
+
+  // Convert escaped newlines to real newlines
+  const privateKey = creds.private_key.replace(/\\n/g, "\n");
 
   const auth = new google.auth.JWT({
     email: creds.client_email,
@@ -51,7 +56,6 @@ function getSheetsClient() {
 
   return google.sheets({ version: "v4", auth });
 }
-
 async function getCurrentOnCallEmail() {
   const sheets = getSheetsClient();
   const resp = await sheets.spreadsheets.values.get({
