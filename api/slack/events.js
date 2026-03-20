@@ -100,9 +100,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({ challenge: body.challenge });
     }
 
-    // TEMPORARY:
-    // Signature verification is bypassed for testing because Slack/Vercel raw body
-    // handling was causing 401 failures. Re-enable once live logic is confirmed.
+    // TEMPORARY: bypassed for testing
     // const valid = verifySlackSignature(req, rawBody);
     // if (!valid) {
     //   return res.status(401).send("Invalid signature");
@@ -115,16 +113,10 @@ module.exports = async (req, res) => {
       console.log("EVENT:", JSON.stringify(event));
       console.log("TARGET_CHANNEL_ID:", TARGET_CHANNEL_ID);
 
-      // Ack Slack immediately
       res.status(200).send("ok");
 
       if (!event) {
         console.log("No event found");
-        return;
-      }
-
-      if (event.type !== "message") {
-        console.log("Ignoring event type:", event.type);
         return;
       }
 
@@ -133,15 +125,17 @@ module.exports = async (req, res) => {
         return;
       }
 
-      // Only react to workflow/bot-posted messages
-      if (!event.bot_id && event.subtype !== "bot_message") {
-        console.log("Ignoring non-bot message");
+      // Only react to workflow/bot-posted channel messages
+      if (event.type !== "message" || event.subtype !== "bot_message") {
+        console.log(
+          "Ignoring event:",
+          "type=", event.type,
+          "subtype=", event.subtype
+        );
         return;
       }
 
-      console.log("Matched workflow/bot message");
-      console.log("bot_id:", event.bot_id);
-      console.log("subtype:", event.subtype);
+      console.log("Matched workflow bot message");
 
       const email = await getCurrentOnCallEmail();
       console.log("On-call email from sheet:", email);
