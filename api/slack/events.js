@@ -39,41 +39,31 @@ async function getCurrentOnCallEmail() {
 
   const sheets = getSheetsClient();
 
-  try {
-    const resp = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: CURRENT_CELL_RANGE,
-    });
+  const resp = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: CURRENT_CELL_RANGE,
+  });
 
-    console.log("Sheet API call succeeded");
-    console.log("Raw sheet response:", JSON.stringify(resp.data));
+  console.log("Sheet API call succeeded");
+  console.log("Raw sheet response:", JSON.stringify(resp.data));
 
-    const value = resp.data.values?.[0]?.[0];
-    const email = (value || "").toString().trim();
+  const value = resp.data.values?.[0]?.[0];
+  const email = (value || "").toString().trim();
 
-    if (!email || !email.includes("@")) {
-      throw new Error(`Cell ${CURRENT_CELL_RANGE} is empty or not an email.`);
-    }
-
-    console.log("Parsed on-call email:", email);
-    return email;
-  } catch (err) {
-    console.error("Sheet lookup failed:", err);
-    throw err;
+  if (!email || !email.includes("@")) {
+    throw new Error(`Cell ${CURRENT_CELL_RANGE} is empty or not an email.`);
   }
+
+  console.log("Parsed on-call email:", email);
+  return email;
 }
 
 async function lookupSlackUserIdByEmail(email) {
-  try {
-    console.log("Looking up Slack user by email:", email);
-    const res = await slack.users.lookupByEmail({ email });
-    const userId = res.user?.id || null;
-    console.log("Resolved Slack user ID:", userId);
-    return userId;
-  } catch (err) {
-    console.error("Slack email lookup failed:", err);
-    throw err;
-  }
+  console.log("Looking up Slack user by email:", email);
+  const res = await slack.users.lookupByEmail({ email });
+  const userId = res.user?.id || null;
+  console.log("Resolved Slack user ID:", userId);
+  return userId;
 }
 
 function verifySlackSignature(req, rawBody) {
@@ -129,8 +119,8 @@ module.exports = async (req, res) => {
       return res.status(200).json({ challenge: body.challenge });
     }
 
-    // TEMPORARY: bypass signature verification while testing live behavior.
-    // Re-enable after everything works.
+    // TEMPORARY: bypass signature verification while testing.
+    // Re-enable once everything is confirmed working.
     // const valid = verifySlackSignature(req, rawBody);
     // if (!valid) {
     //   return res.status(401).send("Invalid signature");
@@ -175,13 +165,20 @@ module.exports = async (req, res) => {
       ? `On call: <@${userId}>`
       : `On call: ${email} (couldn’t map email to Slack user)`;
 
+    console.log("Attempting to post message...");
+    console.log("Posting to channel:", event.channel);
+    console.log("Original event ts:", event.ts);
+    console.log("Original thread_ts:", event.thread_ts || null);
+    console.log("Message text:", messageText);
+
+    // FOR TESTING: post directly in channel, not thread
     const result = await slack.chat.postMessage({
       channel: event.channel,
-      thread_ts: event.thread_ts || event.ts,
       text: messageText,
     });
 
-    console.log("Posted thread reply successfully:", result.ts);
+    console.log("Slack API response:", JSON.stringify(result));
+    console.log("Posted message successfully:", result.ts);
 
     return res.status(200).send("ok");
   } catch (err) {
