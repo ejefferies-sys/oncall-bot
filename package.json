@@ -2,18 +2,12 @@
   "name": "oncall-bot",
   "version": "1.0.0",
   "description": "Slack on-call bot that reads from Google Sheets",
-  "main": "index.js",
   "type": "commonjs",
   "engines": {
     "node": "20.x"
   },
-  "scripts": {
-    "start": "node index.js"
-  },
   "dependencies": {
-    "@slack/bolt": "^4.6.0",
     "@slack/web-api": "^7.8.0",
-    "dotenv": "^17.3.1",
     "googleapis": "^171.4.0"
   }
 }
