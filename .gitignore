@@ -3,3 +3,5 @@ node_modules/
 google-credentials.json
 .DS_Store
 .env*
+.vercel
+.env*.local

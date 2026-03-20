@@ -106,52 +106,30 @@ module.exports = async (req, res) => {
     //   return res.status(401).send("Invalid signature");
     // }
 
-if (body.type === "event_callback") {
-  const event = body.event;
+    if (body.type === "event_callback") {
+      const event = body.event;
 
-  console.log("BODY TYPE:", body.type);
-  console.log("EVENT:", JSON.stringify(event));
-  console.log("TARGET_CHANNEL_ID:", TARGET_CHANNEL_ID);
+      res.status(200).send("ok");
 
-  res.status(200).send("ok");
+      if (!event) return;
+      if (event.type !== "app_mention") return;
+      if (event.channel !== TARGET_CHANNEL_ID) return;
+      if (event.bot_id) return;
 
-  if (!event) {
-    console.log("No event found");
-    return;
-  }
+      const email = await getCurrentOnCallEmail();
+      const userId = await lookupSlackUserIdByEmail(email);
 
-  if (event.type !== "app_mention") {
-    console.log("Ignoring event type:", event.type);
-    return;
-  }
+      await slack.chat.postMessage({
+        channel: event.channel,
+        thread_ts: event.thread_ts || event.ts,
+        text: userId
+          ? `On call: <@${userId}>`
+          : `On call: ${email} (couldn’t map email to Slack user)`,
+      });
 
-  if (event.channel !== TARGET_CHANNEL_ID) {
-    console.log("Channel mismatch:", event.channel, "!=", TARGET_CHANNEL_ID);
-    return;
-  }
+      return;
+    }
 
-  if (event.bot_id) {
-    console.log("Ignoring bot event");
-    return;
-  }
-
-  const email = await getCurrentOnCallEmail();
-  console.log("On-call email from sheet:", email);
-
-  const userId = await lookupSlackUserIdByEmail(email);
-  console.log("Resolved Slack user ID:", userId);
-
-  await slack.chat.postMessage({
-    channel: event.channel,
-    thread_ts: event.thread_ts || event.ts,
-    text: userId
-      ? `On call: <@${userId}>`
-      : `On call: ${email} (couldn’t map email to Slack user)`,
-  });
-
-  console.log("Posted thread reply successfully");
-  return;
-}
     return res.status(200).send("ok");
   } catch (err) {
     console.error("Slack handler error:", err);
