@@ -1,17 +1,6 @@
 require("dotenv").config();
 
-process.on("unhandledRejection", (reason) =>
-  console.error("UNHANDLED REJECTION:", reason)
-);
-process.on("uncaughtException", (err) =>
-  console.error("UNCAUGHT EXCEPTION:", err)
-);
-process.on("SIGTERM", () => {
-  console.log("SIGTERM received — shutting down gracefully...");
-  process.exit(0);
-});
-
-const { App, ExpressReceiver } = require("@slack/bolt");
+const { App } = require("@slack/bolt");
 const { google } = require("googleapis");
 
 const {
@@ -23,25 +12,13 @@ const {
   GOOGLE_CREDENTIALS,
 } = process.env;
 
-if (!SLACK_SIGNING_SECRET) throw new Error("Missing SLACK_SIGNING_SECRET");
-if (!SLACK_BOT_TOKEN) throw new Error("Missing SLACK_BOT_TOKEN");
-if (!SHEET_ID) throw new Error("Missing SHEET_ID");
-if (!TARGET_CHANNEL_ID) throw new Error("Missing TARGET_CHANNEL_ID");
-if (!GOOGLE_CREDENTIALS) throw new Error("Missing GOOGLE_CREDENTIALS");
-
-const receiver = new ExpressReceiver({ signingSecret: SLACK_SIGNING_SECRET });
-receiver.router.post("/slack/events", (req, res, next) => {
-  if (req.body && req.body.challenge) {
-    return res.status(200).json({ challenge: req.body.challenge });
-  }
-  next();
+const app = new App({
+  token: SLACK_BOT_TOKEN,
+  signingSecret: SLACK_SIGNING_SECRET,
+  processBeforeResponse: true,
 });
-// health checks
-receiver.app.get("/", (req, res) => res.status(200).send("ok"));
-receiver.app.get("/healthz", (req, res) => res.status(200).send("ok"));
 
-const app = new App({ token: SLACK_BOT_TOKEN, receiver });
-
+// ---------- GOOGLE SHEETS ----------
 function getSheetsClient() {
   const creds = JSON.parse(GOOGLE_CREDENTIALS);
   const privateKey = creds.private_key.replace(/\\n/g, "\n");
@@ -63,11 +40,7 @@ async function getCurrentOnCallEmail() {
   });
 
   const value = resp.data.values?.[0]?.[0];
-  const email = (value || "").toString().trim();
-  if (!email || !email.includes("@")) {
-    throw new Error(`Cell ${CURRENT_CELL_RANGE} is empty or not an email.`);
-  }
-  return email;
+  return (value || "").toString().trim();
 }
 
 async function lookupSlackUserIdByEmail(email) {
@@ -78,50 +51,29 @@ async function lookupSlackUserIdByEmail(email) {
   return res.user?.id || null;
 }
 
-let SELF_USER_ID = null;
-async function ensureSelfUserId() {
-  if (SELF_USER_ID) return SELF_USER_ID;
-  const res = await app.client.auth.test({ token: SLACK_BOT_TOKEN });
-  SELF_USER_ID = res.user_id;
-  return SELF_USER_ID;
-}
+// ---------- EVENT HANDLER ----------
+app.event("app_mention", async ({ event, client }) => {
+  if (event.channel !== TARGET_CHANNEL_ID) return;
 
-async function postOnCallReply({ channel, thread_ts, logger }) {
-  try {
-    const email = await getCurrentOnCallEmail();
-    const userId = await lookupSlackUserIdByEmail(email);
+  const email = await getCurrentOnCallEmail();
+  const userId = await lookupSlackUserIdByEmail(email);
 
-    await app.client.chat.postMessage({
-      token: SLACK_BOT_TOKEN,
-      channel,
-      thread_ts,
-      text: userId
-        ? `On call: <@${userId}>`
-        : `On call: ${email} (couldn’t map email to Slack user)`,
-    });
-  } catch (err) {
-    logger?.error(err);
-  }
-}
-
-/**
- * ✅ ONLY respond to @mentions to prevent double-posting.
- */
-app.event("app_mention", async ({ event, logger }) => {
-  try {
-    if (event.channel !== TARGET_CHANNEL_ID) return;
-
-    const selfUserId = await ensureSelfUserId();
-    if (event.user && event.user === selfUserId) return;
-
-    await postOnCallReply({
-      channel: event.channel,
-      thread_ts: event.thread_ts || event.ts,
-      logger,
-    });
-  } catch (err) {
-    logger?.error(err);
-  }
+  await client.chat.postMessage({
+    channel: event.channel,
+    thread_ts: event.thread_ts || event.ts,
+    text: userId
+      ? `On call: <@${userId}>`
+      : `On call: ${email}`,
+  });
 });
 
-module.exports = receiver.app;
+// ---------- VERCEL HANDLER ----------
+module.exports = async (req, res) => {
+  // ✅ Slack challenge verification
+  if (req.body && req.body.challenge) {
+    return res.status(200).json({ challenge: req.body.challenge });
+  }
+
+  await app.processEvent(req, res);
+};
+
