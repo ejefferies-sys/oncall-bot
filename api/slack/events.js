@@ -30,7 +30,12 @@ if (!TARGET_CHANNEL_ID) throw new Error("Missing TARGET_CHANNEL_ID");
 if (!GOOGLE_CREDENTIALS) throw new Error("Missing GOOGLE_CREDENTIALS");
 
 const receiver = new ExpressReceiver({ signingSecret: SLACK_SIGNING_SECRET });
-
+receiver.router.post("/slack/events", (req, res, next) => {
+  if (req.body && req.body.challenge) {
+    return res.status(200).json({ challenge: req.body.challenge });
+  }
+  next();
+});
 // health checks
 receiver.app.get("/", (req, res) => res.status(200).send("ok"));
 receiver.app.get("/healthz", (req, res) => res.status(200).send("ok"));
