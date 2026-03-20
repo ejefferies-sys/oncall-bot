@@ -34,27 +34,46 @@ function getSheetsClient() {
 
 async function getCurrentOnCallEmail() {
   console.log("Starting sheet lookup");
+  console.log("Using SHEET_ID:", SHEET_ID);
+  console.log("Using CURRENT_CELL_RANGE:", CURRENT_CELL_RANGE);
+
   const sheets = getSheetsClient();
 
-  const resp = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range: CURRENT_CELL_RANGE,
-  });
+  try {
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: CURRENT_CELL_RANGE,
+    });
 
-  const value = resp.data.values?.[0]?.[0];
-  const email = (value || "").toString().trim();
+    console.log("Sheet API call succeeded");
+    console.log("Raw sheet response:", JSON.stringify(resp.data));
 
-  if (!email || !email.includes("@")) {
-    throw new Error(`Cell ${CURRENT_CELL_RANGE} is empty or not an email.`);
+    const value = resp.data.values?.[0]?.[0];
+    const email = (value || "").toString().trim();
+
+    if (!email || !email.includes("@")) {
+      throw new Error(`Cell ${CURRENT_CELL_RANGE} is empty or not an email.`);
+    }
+
+    console.log("Parsed on-call email:", email);
+    return email;
+  } catch (err) {
+    console.error("Sheet lookup failed:", err);
+    throw err;
   }
-
-  return email;
 }
 
 async function lookupSlackUserIdByEmail(email) {
-  console.log("Looking up Slack user by email:", email);
-  const res = await slack.users.lookupByEmail({ email });
-  return res.user?.id || null;
+  try {
+    console.log("Looking up Slack user by email:", email);
+    const res = await slack.users.lookupByEmail({ email });
+    const userId = res.user?.id || null;
+    console.log("Resolved Slack user ID:", userId);
+    return userId;
+  } catch (err) {
+    console.error("Slack email lookup failed:", err);
+    throw err;
+  }
 }
 
 function verifySlackSignature(req, rawBody) {
@@ -84,6 +103,14 @@ function verifySlackSignature(req, rawBody) {
   }
 }
 
+function isTargetWorkflowMessage(event) {
+  if (!event) return false;
+  if (event.channel !== TARGET_CHANNEL_ID) return false;
+  if (event.type !== "message") return false;
+  if (event.subtype !== "bot_message") return false;
+  return true;
+}
+
 module.exports = async (req, res) => {
   try {
     if (req.method === "GET") {
@@ -96,71 +123,65 @@ module.exports = async (req, res) => {
 
     const rawBody =
       typeof req.body === "string" ? req.body : JSON.stringify(req.body || {});
-
     const body = typeof req.body === "object" ? req.body : JSON.parse(rawBody);
 
     if (body.type === "url_verification" && body.challenge) {
       return res.status(200).json({ challenge: body.challenge });
     }
 
-    // TEMPORARY: bypassed for testing
+    // TEMPORARY: bypass signature verification while testing live behavior.
+    // Re-enable after everything works.
     // const valid = verifySlackSignature(req, rawBody);
     // if (!valid) {
     //   return res.status(401).send("Invalid signature");
     // }
 
-    if (body.type === "event_callback") {
-      const event = body.event;
-
-      console.log("BODY TYPE:", body.type);
-      console.log("EVENT:", JSON.stringify(event));
-      console.log("TARGET_CHANNEL_ID:", TARGET_CHANNEL_ID);
-
-      res.status(200).send("ok");
-
-      if (!event) {
-        console.log("No event found");
-        return;
-      }
-
-      if (event.channel !== TARGET_CHANNEL_ID) {
-        console.log("Channel mismatch:", event.channel, "!=", TARGET_CHANNEL_ID);
-        return;
-      }
-
-      if (event.type !== "message" || event.subtype !== "bot_message") {
-        console.log(
-          "Ignoring event:",
-          "type=", event.type,
-          "subtype=", event.subtype
-        );
-        return;
-      }
-
-      console.log("Matched workflow bot message");
-
-      try {
-        const email = await getCurrentOnCallEmail();
-        console.log("On-call email from sheet:", email);
-
-        const userId = await lookupSlackUserIdByEmail(email);
-        console.log("Resolved Slack user ID:", userId);
-
-        const result = await slack.chat.postMessage({
-          channel: event.channel,
-          thread_ts: event.thread_ts || event.ts,
-          text: userId
-            ? `On call: <@${userId}>`
-            : `On call: ${email} (couldn’t map email to Slack user)`,
-        });
-
-        console.log("Posted thread reply successfully:", result.ts);
-      } catch (innerErr) {
-        console.error("Inner workflow handler error:", innerErr);
-      }
-
-      return;
+    if (body.type !== "event_callback") {
+      console.log("Ignoring non-event_callback body type:", body.type);
+      return res.status(200).send("ok");
     }
+
+    const event = body.event;
+
+    console.log("BODY TYPE:", body.type);
+    console.log("EVENT:", JSON.stringify(event));
+    console.log("TARGET_CHANNEL_ID:", TARGET_CHANNEL_ID);
+
+    if (!event) {
+      console.log("No event found");
+      return res.status(200).send("ok");
+    }
+
+    if (event.channel !== TARGET_CHANNEL_ID) {
+      console.log("Channel mismatch:", event.channel, "!=", TARGET_CHANNEL_ID);
+      return res.status(200).send("ok");
+    }
+
+    if (!isTargetWorkflowMessage(event)) {
+      console.log(
+        "Ignoring event:",
+        "type=", event.type,
+        "subtype=", event.subtype
+      );
+      return res.status(200).send("ok");
+    }
+
+    console.log("Matched workflow bot message");
+
+    const email = await getCurrentOnCallEmail();
+    const userId = await lookupSlackUserIdByEmail(email);
+
+    const messageText = userId
+      ? `On call: <@${userId}>`
+      : `On call: ${email} (couldn’t map email to Slack user)`;
+
+    const result = await slack.chat.postMessage({
+      channel: event.channel,
+      thread_ts: event.thread_ts || event.ts,
+      text: messageText,
+    });
+
+    console.log("Posted thread reply successfully:", result.ts);
 
     return res.status(200).send("ok");
   } catch (err) {
