@@ -119,9 +119,4 @@ app.event("app_mention", async ({ event, logger }) => {
   }
 });
 
-(async () => {
-  const port = Number(process.env.PORT || 3000);
-  console.log("PORT env is:", process.env.PORT, "-> binding to:", port);
-  await app.start(port);
-  console.log(`⚡️ On-call bot listening on port ${port}`);
-})();
+module.exports = receiver.app;
