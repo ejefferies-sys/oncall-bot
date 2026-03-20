@@ -100,8 +100,11 @@ module.exports = async (req, res) => {
       return res.status(200).json({ challenge: body.challenge });
     }
 
-    const valid = true
-    }
+    // TEMP: bypass signature verification until live Slack testing
+    // const valid = verifySlackSignature(req, rawBody);
+    // if (!valid) {
+    //   return res.status(401).send("Invalid signature");
+    // }
 
     if (body.type === "event_callback") {
       const event = body.event;
