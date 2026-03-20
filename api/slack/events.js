@@ -165,20 +165,22 @@ module.exports = async (req, res) => {
       ? `On call: <@${userId}>`
       : `On call: ${email} (couldn’t map email to Slack user)`;
 
-    console.log("Attempting to post message...");
+    const threadTs = event.thread_ts || event.ts;
+
+    console.log("Attempting to post threaded message...");
     console.log("Posting to channel:", event.channel);
     console.log("Original event ts:", event.ts);
-    console.log("Original thread_ts:", event.thread_ts || null);
+    console.log("Thread ts used:", threadTs);
     console.log("Message text:", messageText);
 
-    // FOR TESTING: post directly in channel, not thread
     const result = await slack.chat.postMessage({
       channel: event.channel,
+      thread_ts: threadTs,
       text: messageText,
     });
 
     console.log("Slack API response:", JSON.stringify(result));
-    console.log("Posted message successfully:", result.ts);
+    console.log("Posted threaded reply successfully:", result.ts);
 
     return res.status(200).send("ok");
   } catch (err) {
