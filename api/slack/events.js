@@ -33,7 +33,9 @@ function getSheetsClient() {
 }
 
 async function getCurrentOnCallEmail() {
+  console.log("Starting sheet lookup");
   const sheets = getSheetsClient();
+
   const resp = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range: CURRENT_CELL_RANGE,
@@ -50,6 +52,7 @@ async function getCurrentOnCallEmail() {
 }
 
 async function lookupSlackUserIdByEmail(email) {
+  console.log("Looking up Slack user by email:", email);
   const res = await slack.users.lookupByEmail({ email });
   return res.user?.id || null;
 }
@@ -125,7 +128,6 @@ module.exports = async (req, res) => {
         return;
       }
 
-      // Only react to workflow/bot-posted channel messages
       if (event.type !== "message" || event.subtype !== "bot_message") {
         console.log(
           "Ignoring event:",
@@ -137,21 +139,26 @@ module.exports = async (req, res) => {
 
       console.log("Matched workflow bot message");
 
-      const email = await getCurrentOnCallEmail();
-      console.log("On-call email from sheet:", email);
+      try {
+        const email = await getCurrentOnCallEmail();
+        console.log("On-call email from sheet:", email);
 
-      const userId = await lookupSlackUserIdByEmail(email);
-      console.log("Resolved Slack user ID:", userId);
+        const userId = await lookupSlackUserIdByEmail(email);
+        console.log("Resolved Slack user ID:", userId);
 
-      await slack.chat.postMessage({
-        channel: event.channel,
-        thread_ts: event.thread_ts || event.ts,
-        text: userId
-          ? `On call: <@${userId}>`
-          : `On call: ${email} (couldn’t map email to Slack user)`,
-      });
+        const result = await slack.chat.postMessage({
+          channel: event.channel,
+          thread_ts: event.thread_ts || event.ts,
+          text: userId
+            ? `On call: <@${userId}>`
+            : `On call: ${email} (couldn’t map email to Slack user)`,
+        });
 
-      console.log("Posted thread reply successfully");
+        console.log("Posted thread reply successfully:", result.ts);
+      } catch (innerErr) {
+        console.error("Inner workflow handler error:", innerErr);
+      }
+
       return;
     }
 
