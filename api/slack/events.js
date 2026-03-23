@@ -19,6 +19,9 @@ if (!GOOGLE_CREDENTIALS) throw new Error("Missing GOOGLE_CREDENTIALS");
 
 const slack = new WebClient(SLACK_BOT_TOKEN);
 
+// Your workflow bot ID from logs
+const WORKFLOW_BOT_ID = "B098P07439P";
+
 function getSheetsClient() {
   const creds = JSON.parse(GOOGLE_CREDENTIALS);
   const privateKey = creds.private_key.replace(/\\n/g, "\n");
@@ -87,22 +90,22 @@ function shouldRespondToEvent(event) {
   if (event.channel !== TARGET_CHANNEL_ID) return false;
   if (event.type !== "message") return false;
 
-  // Ignore edited messages and other noisy subtypes
+  // Ignore edits/deletes and other noisy subtypes
   if (event.subtype === "message_changed") return false;
   if (event.subtype === "message_deleted") return false;
 
-  // Ignore this bot's own messages to prevent loops
-  if (event.bot_id && event.bot_id !== "B098P07439P") {
-    // allow workflow bot messages from your workflow bot,
-    // ignore other bots
-    return false;
-  }
+  // Ignore thread replies:
+  // if thread_ts exists and it's different from ts, it's a reply in a thread
+  if (event.thread_ts && event.thread_ts !== event.ts) return false;
 
-  // Allow:
-  // - normal human messages (subtype undefined)
-  // - workflow bot messages (subtype bot_message from your workflow bot)
+  // Ignore bot messages except your approved workflow bot
+  if (event.bot_id && event.bot_id !== WORKFLOW_BOT_ID) return false;
+
+  // Allow normal human root messages
   if (!event.subtype) return true;
-  if (event.subtype === "bot_message" && event.bot_id === "B098P07439P") {
+
+  // Allow workflow bot root messages
+  if (event.subtype === "bot_message" && event.bot_id === WORKFLOW_BOT_ID) {
     return true;
   }
 
@@ -127,7 +130,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({ challenge: body.challenge });
     }
 
-    // Re-enable later once you want signature verification back
+    // Re-enable later if you want strict request verification again
     // const valid = verifySlackSignature(req, rawBody);
     // if (!valid) {
     //   return res.status(401).send("Invalid signature");
@@ -147,6 +150,8 @@ module.exports = async (req, res) => {
           subtype: event?.subtype,
           bot_id: event?.bot_id,
           channel: event?.channel,
+          ts: event?.ts,
+          thread_ts: event?.thread_ts,
         })
       );
       return res.status(200).send("ok");
@@ -159,7 +164,8 @@ module.exports = async (req, res) => {
       ? `On call: <@${userId}>`
       : `On call: ${email} (couldn’t map email to Slack user)`;
 
-    const threadTs = event.thread_ts || event.ts;
+    // For a root message, thread on the root
+    const threadTs = event.ts;
 
     const result = await slack.chat.postMessage({
       channel: event.channel,
